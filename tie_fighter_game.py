@@ -1,6 +1,7 @@
 import pygame
 import random
 import sys
+import os
 
 # Initialize Pygame
 pygame.init()
@@ -21,7 +22,15 @@ pygame.display.set_caption("Tie Fighter")
 tie_fighter_img = pygame.image.load("tie_fighter.png").convert_alpha()
 xwing_img = pygame.image.load("xwing.png").convert_alpha()
 background_img = pygame.image.load("space_background.png").convert()
-explosion_img = pygame.image.load("explosion.png").convert_alpha()
+
+# Load explosion image
+explosion_img_path = "explosion.png"
+if os.path.exists(explosion_img_path):
+    explosion_img = pygame.image.load(explosion_img_path).convert_alpha()
+else:
+    # Create a placeholder surface if the image is missing
+    explosion_img = pygame.Surface((50, 50), pygame.SRCALPHA)
+    pygame.draw.circle(explosion_img, (255, 165, 0), (25, 25), 25)
 
 # Function to scale images while maintaining aspect ratio
 def scale_image(image, new_width=None, new_height=None):
@@ -39,7 +48,7 @@ def scale_image(image, new_width=None, new_height=None):
 background_img = scale_image(background_img, new_width=SCREEN_WIDTH, new_height=SCREEN_HEIGHT)
 background_rect = background_img.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
 
-# Scale Tie Fighter and X-Wing images
+# Scale Tie Fighter, X-Wing, and Explosion images
 tie_fighter_img = scale_image(tie_fighter_img, new_height=SCREEN_HEIGHT * 0.15)
 xwing_img = scale_image(xwing_img, new_height=SCREEN_HEIGHT * 0.1)
 explosion_img = scale_image(explosion_img, new_height=SCREEN_HEIGHT * 0.1)
@@ -50,8 +59,25 @@ clock = pygame.time.Clock()
 # Font
 font = pygame.font.SysFont(None, 36)
 
+# Explosion class
+class Explosion(pygame.sprite.Sprite):
+    def __init__(self, center):
+        super().__init__()
+        self.image = explosion_img
+        self.rect = self.image.get_rect(center=center)
+        self.timer = pygame.time.get_ticks()
+        self.duration = 500  # milliseconds
+
+    def update(self):
+        # Remove the explosion after its duration
+        if pygame.time.get_ticks() - self.timer > self.duration:
+            self.kill()
+
 # Bullet group for X-Wings
 xwing_bullets = pygame.sprite.Group()
+
+# Explosion group
+explosion_group = pygame.sprite.Group()
 
 # Tie Fighter class
 class TieFighter(pygame.sprite.Sprite):
@@ -87,7 +113,7 @@ class XWing(pygame.sprite.Sprite):
         self.rect.y = -self.rect.height  # Start just above the screen
         self.speed = 3  # Adjust speed as needed
         self.last_shot = pygame.time.get_ticks()
-        self.shoot_delay = random.randint(1000, 3000)  # Shoot every 1 to 3 seconds
+        self.shoot_delay = random.randint(1500, 3000)  # Shoot every 1.5 to 3 seconds
 
     def update(self, tie_fighter_x):
         # Move downwards
@@ -102,7 +128,7 @@ class XWing(pygame.sprite.Sprite):
         current_time = pygame.time.get_ticks()
         if current_time - self.last_shot > self.shoot_delay:
             self.last_shot = current_time
-            self.shoot_delay = random.randint(1000, 3000)
+            self.shoot_delay = random.randint(1500, 3000)
             # Shoot bullet downwards
             bullet = Bullet(
                 self.rect.center,
@@ -127,20 +153,6 @@ class Bullet(pygame.sprite.Sprite):
         self.rect.y += self.direction[1]*self.speed
         # Remove if off screen
         if not screen.get_rect().colliderect(self.rect):
-            self.kill()
-
-# Explosion class
-class Explosion(pygame.sprite.Sprite):
-    def __init__(self, center):
-        super().__init__()
-        self.image = explosion_img
-        self.rect = self.image.get_rect(center=center)
-        self.timer = 0
-        self.duration = 500  # Explosion lasts 500 milliseconds
-
-    def update(self):
-        self.timer += clock.get_time()
-        if self.timer >= self.duration:
             self.kill()
 
 # Display instructions
@@ -180,10 +192,10 @@ def main():
     tie_group = pygame.sprite.Group(tie_fighter)
     xwing_group = pygame.sprite.Group()
     tie_bullets = pygame.sprite.Group()
-    explosions = pygame.sprite.Group()
     xwing_spawn_timer = 0
     game_over = False
     start_time = pygame.time.get_ticks()
+    score = 0  # Initialize score
     display_instructions()
 
     while True:
@@ -211,8 +223,8 @@ def main():
             keys_pressed = pygame.key.get_pressed()
             tie_fighter.update(keys_pressed)
 
-            # Spawn X-Wings every 3 to 5 seconds
-            if current_time - xwing_spawn_timer > random.randint(3000, 5000):
+            # Spawn X-Wings every 2 to 3 seconds
+            if current_time - xwing_spawn_timer > random.randint(2000, 3000):
                 xwing = XWing()
                 xwing_group.add(xwing)
                 xwing_spawn_timer = current_time
@@ -220,32 +232,33 @@ def main():
             xwing_group.update(tie_fighter.rect.centerx)
             tie_bullets.update()
             xwing_bullets.update()
-            explosions.update()
+            explosion_group.update()
 
             # Check collisions between Tie Fighter bullets and X-Wings
             for bullet in tie_bullets:
                 hit_xwings = pygame.sprite.spritecollide(bullet, xwing_group, True)
-                for xwing in hit_xwings:
+                if hit_xwings:
+                    for xwing in hit_xwings:
+                        # Create explosion
+                        explosion = Explosion(xwing.rect.center)
+                        explosion_group.add(explosion)
+                        score += 10  # Increase score
                     bullet.kill()
-                    # Create explosion at X-Wing position
-                    explosion = Explosion(xwing.rect.center)
-                    explosions.add(explosion)
 
-            # Check collisions between X-Wing bullets and Tie Fighter
-            for bullet in xwing_bullets:
-                if tie_fighter.rect.colliderect(bullet.rect):
-                    tie_fighter.shield -= 10
-                    bullet.kill()
-                    if tie_fighter.shield <= 0:
-                        game_over = True
-                        game_over_time = pygame.time.get_ticks()
+            # Check collisions between Tie Fighter and X-Wing bullets
+            colliding_bullets = pygame.sprite.spritecollide(tie_fighter, xwing_bullets, True)
+            if colliding_bullets:
+                tie_fighter.shield -= 1  # Decrease shield by 1 per collision event
+                print(f"Hit by bullet! Shield decreased to {tie_fighter.shield}")
+                if tie_fighter.shield <= 0:
+                    game_over = True
+                    game_over_time = pygame.time.get_ticks()
 
             # Check collisions between Tie Fighter and X-Wings
-            hit_xwings = pygame.sprite.spritecollide(tie_fighter, xwing_group, True)
-            for xwing in hit_xwings:
-                tie_fighter.shield -= 20  # Colliding with an X-Wing causes more damage
-                explosion = Explosion(xwing.rect.center)
-                explosions.add(explosion)
+            colliding_xwings = pygame.sprite.spritecollide(tie_fighter, xwing_group, True)
+            if colliding_xwings:
+                tie_fighter.shield -= 1  # Decrease shield by 1 per collision event
+                print(f"Collided with X-Wing! Shield decreased to {tie_fighter.shield}")
                 if tie_fighter.shield <= 0:
                     game_over = True
                     game_over_time = pygame.time.get_ticks()
@@ -254,7 +267,8 @@ def main():
             for xwing in xwing_group:
                 if xwing.rect.top > SCREEN_HEIGHT:
                     tie_fighter.shield -= 1  # Deduct shield point
-                    xwing.kill()
+                    print(f"X-Wing passed! Shield decreased to {tie_fighter.shield}")
+                    xwing.kill()  # Remove X-Wing to prevent continuous decrement
                     if tie_fighter.shield <= 0:
                         game_over = True
                         game_over_time = pygame.time.get_ticks()
@@ -266,7 +280,7 @@ def main():
         xwing_group.draw(screen)
         tie_bullets.draw(screen)
         xwing_bullets.draw(screen)
-        explosions.draw(screen)
+        explosion_group.draw(screen)
 
         # Draw shield
         shield_text = font.render(f"Shield: {tie_fighter.shield}", True, RETRO_GREEN)
@@ -275,6 +289,10 @@ def main():
         # Draw timer
         timer_text = font.render(f"Time: {elapsed_time}", True, RETRO_GREEN)
         screen.blit(timer_text, (SCREEN_WIDTH - 150, 10))
+
+        # Draw score
+        score_text = font.render(f"Score: {score}", True, RETRO_GREEN)
+        screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, 50))
 
         # Draw game title
         title_text = font.render("Zain's Game", True, RETRO_GREEN)
